@@ -133,8 +133,22 @@ def memory_node(state: AgentState, *, llm: BaseChatModel) -> Dict[str, Any]:
 # ============ 3) Draft / Review / Lookup / Smalltalk（示例实现） ============
 def draft_node(state: AgentState, *, llm: BaseChatModel) -> Dict[str, Any]:
     q = state.get("question") or "请起草合同。"
-    prompt = f"请根据要素起草一份简明的服务合同草案。输入：{q}"
-    ai = llm.invoke([("user", prompt)])
+    window = _last_messages(state, 4)
+    history_hint = _messages_plaintext(window)
+    user = HumanMessage(
+        content=(
+        f"【用户问题】\n{q}\n\n"
+        f"【最近对话摘要】\n{history_hint or '（无）'}\n\n"
+        )
+    )
+    system = SystemMessage(
+        content=(
+            "你是一名严谨的法律助手，擅长合同撰写,请根据用户的要求撰写一份合同。"
+            "可以进行联网检索，除非用户提供的文本中就有证据，否则不要编造具体法条。"
+            "若信息不足，请清楚写明假设、边界与需要用户补充的材料。"
+        )
+    )
+    ai = llm.invoke([system, user])
     answer = (ai.content or "").strip()
     return {"response": answer, "messages": [AIMessage(content=answer)]}
 
@@ -145,6 +159,8 @@ def review_node(state: AgentState, *, llm: BaseChatModel) -> Dict[str, Any]:
     - 输出结构化的风险意见，尽量引用条款号/关键原文（若有）
     """
     text = state.get("contract_text") or ""
+    window = _last_messages(state, 4)
+    history_hint = _messages_plaintext(window)
     q = state.get("question") or ""
 
     # 若没有正文，至少保证模型有个审阅目标
@@ -162,6 +178,7 @@ def review_node(state: AgentState, *, llm: BaseChatModel) -> Dict[str, Any]:
         content=(
             "请审阅以下合同文本（或与其相关的说明），给出专业且可执行的风险提示：\n\n"
             f"【审阅对象】\n{review_target}\n\n"
+            f"【最近对话摘要】\n{history_hint or '（无）'}\n\n"
             "【输出要求】\n"
             "1. 以有序列表列出“风险点（Risk）”。每个风险点需包含：\n"
             "   - 严重程度：高/中/低（并简述理由）\n"
